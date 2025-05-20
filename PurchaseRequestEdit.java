@@ -44,9 +44,25 @@ public class PurchaseRequestEdit extends AbstractActionEdit<ModulePurchaseReques
         if (entity == null) throw new ResourceNotFoundException();
 
         if (!PurchaseRequestStatus.PENDING.equals(entity.getStatus()) ||
-            !Objects.equals(entity.getRequester(), request.getUserProfile().getCollaborator())) {
+            (!Objects.equals(entity.getRequester(), request.getUserProfile().getCollaborator())
+            		&& !request.getUserProfile().isAdministrator())) {
             throw new PermissionDeniedException();
         }
+
+        // Verificações de segurança para evitar NullPointerException
+        if (entity.getWarehouse() == null || entity.getWarehouse().getCompany() == null) {
+            throw new InternalServerErrorException("Dados de armazém da requisição estão incompletos.");
+        }
+
+        if (entity.getProductType() == null || entity.getProductType().getCategory() == null) {
+            throw new InternalServerErrorException("Dados de produto da requisição estão incompletos.");
+        }
+
+        if (entity.getRequester() == null || entity.getRequester().getName() == null) {
+            throw new InternalServerErrorException("Dados do requisitante da requisição estão incompletos.");
+        }
+
+        request.set("entity", entity); // só setamos aqui para reutilizar no save
 
         windowBuilder.getDataBuilder()
             .add("company", entity.getWarehouse().getCompany().getId())
@@ -74,19 +90,30 @@ public class PurchaseRequestEdit extends AbstractActionEdit<ModulePurchaseReques
             .add(new Textarea("description").setLabel(LRCore.DESCRIPTION).addClass("col-12").setMinHeight(100));
     }
 
+
     @Override
     public void onValidationRequest(EntityManagerWrapper entityManager, ActionRequest request,
-    		ActionValidationBuilder validationBuilder)
-            throws AccessDeniedException, ResourceNotFoundException, ActionErrorException  {
+                                    ActionValidationBuilder validationBuilder)
+            throws AccessDeniedException, ResourceNotFoundException, ActionErrorException {
 
         PurchaseRequest entity = entityManager.find(PurchaseRequest.class, request.getEntityId());
         if (entity == null) throw new ResourceNotFoundException();
 
         if (!PurchaseRequestStatus.PENDING.equals(entity.getStatus()) ||
             !Objects.equals(entity.getRequester(), request.getUserProfile().getCollaborator())) {
-        	throw new ActionErrorException(new LanguageResource("Você não tem permissão para editar esta requisição."));
+            throw new ActionErrorException(new LanguageResource("Você não tem permissão para editar esta requisição."));
         }
-               
+
+        // Verificação de segurança de dados incompletos
+        if (entity.getWarehouse() == null || entity.getWarehouse().getCompany() == null) {
+            throw new ActionErrorException(new LanguageResource("Dados de armazém da requisição incompletos."));
+        }
+
+        if (entity.getProductType() == null || entity.getProductType().getCategory() == null) {
+            throw new ActionErrorException(new LanguageResource("Dados de produto da requisição incompletos."));
+        }
+
+        // Validação de campos obrigatórios
         if (request.isEmpty("company")) {
             validationBuilder.addCannotBeEmpty("company");
         } else {
@@ -137,6 +164,7 @@ public class PurchaseRequestEdit extends AbstractActionEdit<ModulePurchaseReques
 
         request.set("entity", entity);
     }
+
 
     @Override
     public void onSaveRequest(EntityManagerWrapper entityManager, ActionRequest request,
