@@ -1,118 +1,174 @@
-package br.com.firsti.packages.purchase.entities;
+package br.com.firsti.packages.purchase.modules.purchaseRequest.actions;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
-import jakarta.persistence.Table;
-
+import java.awt.Color;
 import java.math.BigDecimal;
-import java.util.Date;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.TreeSet;
 
-import br.com.firsti.packages.organization.entities.Collaborator;
-import br.com.firsti.packages.product.entities.Product;
-import br.com.firsti.packages.product.entities.ProductType;
+import br.com.firsti.languages.LRCore;
+import br.com.firsti.languages.LRProduct;
+import br.com.firsti.languages.LRPurchase;
+import br.com.firsti.module.actions.AbstractActionEdit;
+import br.com.firsti.module.exceptions.AccessDeniedException;
+import br.com.firsti.module.exceptions.ActionErrorException;
+import br.com.firsti.module.exceptions.InternalServerErrorException;
+import br.com.firsti.module.exceptions.PermissionDeniedException;
+import br.com.firsti.module.exceptions.ResourceNotFoundException;
+import br.com.firsti.module.requests.ActionRequest;
+import br.com.firsti.module.structures.ActionValidation.ActionValidationBuilder;
+import br.com.firsti.module.structures.ActivityData.ActivityBuilder;
+import br.com.firsti.packages.organization.entities.Company;
+import br.com.firsti.packages.product.entities.*;
+import br.com.firsti.packages.purchase.entities.PurchaseRequest;
+import br.com.firsti.packages.purchase.entities.PurchaseRequest.PurchaseRequestStatus;
+import br.com.firsti.packages.purchase.modules.purchaseRequest.ModulePurchaseRequest;
 import br.com.firsti.packages.stock.entities.Warehouse;
+import br.com.firsti.persistence.EntityManagerWrapper;
+import br.com.firsti.services.websocket.messages.output.elements.items.*;
+import br.com.firsti.system.LanguageResource;
 
-@Entity
-@Table(schema = "purchase")
-public class PurchaseRequest {
+public class PurchaseRequestEdit extends AbstractActionEdit<ModulePurchaseRequest> {
 
-    public enum PurchaseRequestStatus {
-        PENDING,
-        PURCHASED
+    public PurchaseRequestEdit() {
+        super(new Builder<ModulePurchaseRequest>(Access.COMPANY_PRIVATE));
+    }
+   
+    @Override
+    public void onWindowRequest(EntityManagerWrapper entityManager, ActionRequest request, WindowBuilder windowBuilder)
+            throws AccessDeniedException, PermissionDeniedException, InternalServerErrorException, ResourceNotFoundException {
+
+        PurchaseRequest entity = entityManager.find(PurchaseRequest.class, request.getEntityId());
+        if (entity == null) throw new ResourceNotFoundException();
+
+        if (!PurchaseRequestStatus.PENDING.equals(entity.getStatus()) ||
+            !Objects.equals(entity.getRequester(), request.getUserProfile().getCollaborator())) {
+            throw new PermissionDeniedException();
+        }
+
+        windowBuilder.getDataBuilder()
+            .add("company", entity.getWarehouse().getCompany().getId())
+            .add("warehouse", entity.getWarehouse().getId())
+            .add("status", entity.getStatus())
+            .add("requester", entity.getRequester().getName())
+            .add("category", entity.getProductType().getCategory().getId())
+            .add("productType", entity.getProductType().getId())
+            .add("product", entity.getProduct() != null ? entity.getProduct().getId() : null)
+            .add("quantity", entity.getQuantity())
+            .add("description", entity.getDescription());
+
+        windowBuilder.getHeaderBuilder()
+            .add(new Select("company").setLabel(LRCore.COMPANY).addClass("col-4"))
+            .add(new Select("warehouse").setLabel(LRCore.WAREHOUSE).addClass("col-6"))
+            .add(new InputView("status").setLabel(LRCore.STATUS).setTranslate(LRPurchase.class).addClass("col-2"));
+
+        windowBuilder.getBodyBuilder()
+            .add(new InputView("requester").setLabel(LRCore.REQUESTER).addClass("col-4"))
+            .add(new InputView("creation").setLabel(LRCore.CREATION).addClass("col-6"))
+            .add(new Select("category").setLabel(LRProduct.CATEGORY).addClass("col-2"))
+            .add(new Select("productType").setLabel(LRProduct.PRODUCT_TYPE).addClass("col-4"))
+            .add(new Select("product").setLabel(LRProduct.PRODUCT).addClass("col-4"))
+            .add(new InputText("quantity").setLabel(LRCore.QUANTITY).addClass("col-2"))
+            .add(new Textarea("description").setLabel(LRCore.DESCRIPTION).addClass("col-12").setMinHeight(100));
     }
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private int id;
+    @Override
+    public void onValidationRequest(EntityManagerWrapper entityManager, ActionRequest request,
+    		ActionValidationBuilder validationBuilder)
+            throws AccessDeniedException, ResourceNotFoundException, ActionErrorException  {
 
-    @ManyToOne
-    @JoinColumn(name = "requesterId", nullable = false, updatable = true)
-    private Collaborator requester;
+        PurchaseRequest entity = entityManager.find(PurchaseRequest.class, request.getEntityId());
+        if (entity == null) throw new ResourceNotFoundException();
 
-    @ManyToOne
-    @JoinColumn(name = "warehouseId", nullable = false, updatable = true)
-    private Warehouse warehouse;
-
-    @ManyToOne
-    @JoinColumn(name = "productTypeId", nullable = false, updatable = true)
-    private ProductType productType;
-
-    @ManyToOne
-    @JoinColumn(name = "productId", nullable = true, updatable = true)
-    private Product product;
-
-    @Column(nullable = true, updatable = true)
-    private String description;
-
-    @Column(precision = 9, scale = 2, nullable = false, updatable = true)
-    private BigDecimal quantity;
-
-    @ManyToOne
-    @JoinColumn(name = "purchaseId", nullable = true, updatable = true)
-    private Purchase purchase;
-
-    @Column(nullable = false, updatable = false)
-    private Date creation;
-
-    @Enumerated(EnumType.STRING)
-    @Column(columnDefinition = "purchase."PurchaseRequestStatus" NOT NULL", updatable = true)
-    private PurchaseRequestStatus status;
-
-    public PurchaseRequest() {}
-
-    public PurchaseRequest(Warehouse warehouse, ProductType productType, Product product, String description,
-                           BigDecimal quantity) {
-
-        if (warehouse == null) {
-            throw new IllegalArgumentException("The 'warehouse' cannot be null.");
+        if (!PurchaseRequestStatus.PENDING.equals(entity.getStatus()) ||
+            !Objects.equals(entity.getRequester(), request.getUserProfile().getCollaborator())) {
+        	throw new ActionErrorException(new LanguageResource("Você não tem permissão para editar esta requisição."));
+        }
+               
+        if (request.isEmpty("company")) {
+            validationBuilder.addCannotBeEmpty("company");
+        } else {
+            Company company = entityManager.find(Company.class, request.getInteger("company"));
+            if (company == null) validationBuilder.addInvalidValue("company");
         }
 
-        if (productType == null) {
-            throw new IllegalArgumentException("The 'productType' cannot be null.");
+        if (request.isEmpty("warehouse")) {
+            validationBuilder.addCannotBeEmpty("warehouse");
+        } else {
+            Warehouse warehouse = entityManager.find(Warehouse.class, request.getInteger("warehouse"));
+            if (warehouse == null) validationBuilder.addInvalidValue("warehouse");
         }
 
-        if (product != null && !product.getType().equals(productType)) {
-            throw new IllegalArgumentException("The 'product' type is not the same as the productType.");
+        if (request.isEmpty("category")) {
+            validationBuilder.addCannotBeEmpty("category");
         }
 
-        if (quantity == null) {
-            throw new IllegalArgumentException("The 'quantity' cannot be null.");
+        ProductType type = null;
+        if (request.isEmpty("productType")) {
+            validationBuilder.addCannotBeEmpty("productType");
+        } else {
+            type = entityManager.find(ProductType.class, request.getInteger("productType"));
+            if (type == null) {
+                validationBuilder.addInvalidValue("productType");
+            } else {
+                request.set("productType", type);
+            }
         }
 
-        this.warehouse = warehouse;
-        this.productType = productType;
-        this.product = product;
-        this.description = description;
-        this.quantity = quantity;
+        if (!request.isEmpty("product")) {
+            Product product = entityManager.find(Product.class, request.getInteger("product"));
+            if (product == null) {
+                validationBuilder.addInvalidValue("product");
+            } else {
+                request.set("product", product);
+            }
+        }
 
-        this.creation = new Date();
-        this.status = PurchaseRequestStatus.PENDING;
+        if (request.isEmpty("quantity")) {
+            validationBuilder.addCannotBeEmpty("quantity");
+        }
+
+        String description = request.getString("description");
+        if (description == null || description.trim().length() < 25) {
+            validationBuilder.addMinimumLength("description", 25);
+        }
+
+        request.set("entity", entity);
     }
 
-    public int getId() { return id; }
-    public Warehouse getWarehouse() { return warehouse; }
-    public ProductType getProductType() { return productType; }
-    public Collaborator getRequester() { return requester; }
-    public Product getProduct() { return product; }
-    public String getDescription() { return description; }
-    public BigDecimal getQuantity() { return quantity; }
-    public Purchase getPurchase() { return purchase; }
-    public PurchaseRequestStatus getStatus() { return status; }
-    public Date getCreation() { return creation; }
+    @Override
+    public void onSaveRequest(EntityManagerWrapper entityManager, ActionRequest request,
+                               ActivityBuilder activityBuilder)
+            throws ResourceNotFoundException, ActionErrorException, InternalServerErrorException {
 
-    public void setStatus(PurchaseRequestStatus status) { this.status = status; }
-    public void setRequester(Collaborator requester) { this.requester = requester; }
-    public void setCreation(Date creation) { this.creation = creation; }
-    public void setWarehouse(Warehouse warehouse) { this.warehouse = warehouse; }
-    public void setProductType(ProductType productType) { this.productType = productType; }
-    public void setProduct(Product product) { this.product = product; }
-    public void setQuantity(BigDecimal quantity) { this.quantity = quantity; }
-    public void setDescription(String description) { this.description = description; }
+        PurchaseRequest entity = request.get("entity", PurchaseRequest.class);
+        if (entity == null) throw new ResourceNotFoundException();
+
+        Warehouse warehouse = entityManager.find(Warehouse.class, request.getInteger("warehouse"));
+        ProductType productType = request.get("productType", ProductType.class);
+        Product product = request.isSet("product") ? request.get("product", Product.class) : null;
+        String description = request.getString("description");
+
+        BigDecimal quantity;
+        String unit = productType.getUnit() != null ? productType.getUnit().name() : null;
+        if ("UNIT".equalsIgnoreCase(unit)) {
+            quantity = BigDecimal.valueOf(request.get("quantity", Integer.class));
+        } else {
+            quantity = BigDecimal.valueOf(request.get("quantity", Double.class));
+        }
+
+        activityBuilder.checkField(LRCore.WAREHOUSE, entity.getWarehouse(), warehouse);
+        activityBuilder.checkField(LRProduct.PRODUCT_TYPE, entity.getProductType(), productType);
+        activityBuilder.checkField(LRProduct.PRODUCT, entity.getProduct(), product);
+        activityBuilder.checkField(LRCore.QUANTITY, entity.getQuantity(), quantity);
+        activityBuilder.checkField(LRCore.DESCRIPTION, !Objects.equals(entity.getDescription(), description));
+
+        entity.setWarehouse(warehouse);
+        entity.setProductType(productType);
+        entity.setProduct(product);
+        entity.setQuantity(quantity);
+        entity.setDescription(description);
+    }
 }
