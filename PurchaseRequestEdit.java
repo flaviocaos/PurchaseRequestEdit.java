@@ -49,29 +49,41 @@ public class PurchaseRequestEdit extends AbstractActionEdit<ModulePurchaseReques
             throw new PermissionDeniedException();
         }
 
-        // Verificações de segurança para evitar NullPointerException
-        if (entity.getWarehouse() == null || entity.getWarehouse().getCompany() == null) {
-            throw new InternalServerErrorException("Dados de armazém da requisição estão incompletos.");
-        }
+     // Preloads
+        entityManager.createNamedQuery("Company.findAllWithSocialName", Company.class)
+            .getResultStream()
+            .forEach(company -> windowBuilder.getPreloadBuilder().addTo("company", company.getId(), company.getName()));
 
-        if (entity.getProductType() == null || entity.getProductType().getCategory() == null) {
-            throw new InternalServerErrorException("Dados de produto da requisição estão incompletos.");
-        }
+        entityManager.createQuery("FROM Warehouse w WHERE w.company = ?1 ORDER BY w.name", Warehouse.class)
+            .setParameter(1, entity.getWarehouse().getCompany())
+            .getResultStream()
+            .forEach(w -> windowBuilder.getPreloadBuilder().addTo("warehouse", w.getId(), w.getName()));
 
-        if (entity.getRequester() == null || entity.getRequester().getName() == null) {
-            throw new InternalServerErrorException("Dados do requisitante da requisição estão incompletos.");
-        }
+        entityManager.createQuery("FROM ProductType pt ORDER BY pt.name", ProductType.class)
+            .getResultStream()
+            .forEach(pt -> windowBuilder.getPreloadBuilder().addTo("productType", pt.getId(), pt.getName()));
 
+        entityManager.createQuery("FROM Product p ORDER BY p.model", Product.class)
+            .getResultStream()
+            .forEach(p -> windowBuilder.getPreloadBuilder().addTo("product", p.getId(), p.getModel()));
+        
+            entityManager.createQuery("FROM ProductCategory c ORDER BY c.name", ProductCategory.class)
+            .getResultStream()
+            .forEach(category -> {
+                windowBuilder.getPreloadBuilder().addTo("category", category.getId(), category.getName());
+            });
+        
+     
         request.set("entity", entity); // só setamos aqui para reutilizar no save
 
         windowBuilder.getDataBuilder()
-            .add("company", entity.getWarehouse().getCompany().getId())
-            .add("warehouse", entity.getWarehouse().getId())
+            .addEntityId("company", entity.getWarehouse().getCompany().getId())
+            .addEntityId("warehouse", entity.getWarehouse().getId())
             .add("status", entity.getStatus())
             .add("requester", entity.getRequester().getName())
-            .add("category", entity.getProductType().getCategory().getId())
-            .add("productType", entity.getProductType().getId())
-            .add("product", entity.getProduct() != null ? entity.getProduct().getId() : null)
+            .addEntityId("category", entity.getProductType().getCategory().getId())
+            .addEntityId("productType", entity.getProductType().getId())
+            .addEntityId("product", entity.getProduct() != null ? entity.getProduct().getId() : null)
             .add("quantity", entity.getQuantity())
             .add("description", entity.getDescription());
 
@@ -100,18 +112,19 @@ public class PurchaseRequestEdit extends AbstractActionEdit<ModulePurchaseReques
         if (entity == null) throw new ResourceNotFoundException();
 
         if (!PurchaseRequestStatus.PENDING.equals(entity.getStatus()) ||
-            !Objects.equals(entity.getRequester(), request.getUserProfile().getCollaborator())) {
-            throw new ActionErrorException(new LanguageResource("Você não tem permissão para editar esta requisição."));
+                (!Objects.equals(entity.getRequester(), request.getUserProfile().getCollaborator())
+                		&& !request.getUserProfile().isAdministrator())) {
+            throw new AccessDeniedException();
         }
 
-        // Verificação de segurança de dados incompletos
-        if (entity.getWarehouse() == null || entity.getWarehouse().getCompany() == null) {
-            throw new ActionErrorException(new LanguageResource("Dados de armazém da requisição incompletos."));
-        }
-
-        if (entity.getProductType() == null || entity.getProductType().getCategory() == null) {
-            throw new ActionErrorException(new LanguageResource("Dados de produto da requisição incompletos."));
-        }
+//        // Verificação de segurança de dados incompletos
+//        if (entity.getWarehouse() == null || entity.getWarehouse().getCompany() == null) {
+//            throw new ActionErrorException(new LanguageResource("Dados de armazém da requisição incompletos."));
+//        }
+//
+//        if (entity.getProductType() == null || entity.getProductType().getCategory() == null) {
+//            throw new ActionErrorException(new LanguageResource("Dados de produto da requisição incompletos."));
+//        }
 
         // Validação de campos obrigatórios
         if (request.isEmpty("company")) {
@@ -179,24 +192,21 @@ public class PurchaseRequestEdit extends AbstractActionEdit<ModulePurchaseReques
         Product product = request.isSet("product") ? request.get("product", Product.class) : null;
         String description = request.getString("description");
 
-        BigDecimal quantity;
-        String unit = productType.getUnit() != null ? productType.getUnit().name() : null;
-        if ("UNIT".equalsIgnoreCase(unit)) {
-            quantity = BigDecimal.valueOf(request.get("quantity", Integer.class));
-        } else {
-            quantity = BigDecimal.valueOf(request.get("quantity", Double.class));
-        }
+        BigDecimal quantity= request.getBigDecimal("quantity");
+        
 
         activityBuilder.checkField(LRCore.WAREHOUSE, entity.getWarehouse(), warehouse);
         activityBuilder.checkField(LRProduct.PRODUCT_TYPE, entity.getProductType(), productType);
         activityBuilder.checkField(LRProduct.PRODUCT, entity.getProduct(), product);
         activityBuilder.checkField(LRCore.QUANTITY, entity.getQuantity(), quantity);
         activityBuilder.checkField(LRCore.DESCRIPTION, !Objects.equals(entity.getDescription(), description));
-
+        
         entity.setWarehouse(warehouse);
         entity.setProductType(productType);
         entity.setProduct(product);
         entity.setQuantity(quantity);
         entity.setDescription(description);
+
+      
     }
 }
